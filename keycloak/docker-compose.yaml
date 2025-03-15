@@ -1,0 +1,50 @@
+networks:
+  keycloak:
+    driver: bridge
+
+volumes:
+  pg_data:
+    driver: local
+
+services:
+  keycloak-postgresql:
+    image: postgres:16.8
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # - ./pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - 5432:5432
+    networks:
+      - keycloak
+
+  keycloak:
+    image: bitnami/keycloak:26.1.4-debian-12-r0
+    # image: keycloak/keycloak:26.1
+    # https://www.keycloak.org/getting-started/getting-started-docker
+    # image: quay.io/keycloak/keycloak:26.1.4 start-dev
+    environment:
+      KEYCLOAK_HOSTNAME: auth.nsa2.com
+      # KEYCLOAK_USER: admin
+      # KEYCLOAK_PASSWORD: password
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: password
+      KC_SPI_ADMIN_REALM: master
+      KEYCLOAK_HTTP_RELATIVE_PATH: /
+    
+      DB_VENDOR: POSTGRES
+      DB_ADDR: keycloak-postgresql
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_PASSWORD: password
+    ports:
+      - 9000:8080
+    networks:
+      - keycloak    
+
+
+

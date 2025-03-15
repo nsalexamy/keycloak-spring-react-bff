@@ -1,0 +1,17 @@
+= Replacing Spring Authorization Server with Keycloak
+
+== Introduction
+
+This guide shows how to replace the Spring Authorization Server with Keycloak.
+
+== Comparison: Keycloak vs Spring Authorization Server
+
+Keycloak is a standalone identity and access management server, which provides a wide range of features, including Single Sign-On (SSO), Identity Brokering and Social Login, User Federation, Client Adapters, an Admin Console, and an Account Management Console.
+
+Spring Authorization Server is a lightweight OAuth 2.0 and OpenID Connect (OIDC) server, which provides a subset of the features provided by Keycloak. It is designed to be embedded in Spring Boot applications and is suitable for simple use cases. It is not as feature-rich as Keycloak.
+
+Here are some of the key differences between Keycloak and Spring Authorization Server:
+
+* Keycloak is a standalone server, whereas Spring Authorization Server is designed to be embedded in Spring Boot applications.
+* Keycloak provides a wide range of features, including Single Sign-On (SSO), Identity Brokering and Social Login, User Federation, Client Adapters, an Admin Console, and an Account Management Console. Spring Authorization Server provides a subset of these features.
+* Keycloak is suitable for complex use cases, whereas Spring Authorization Server is suitable for simple use cases.
