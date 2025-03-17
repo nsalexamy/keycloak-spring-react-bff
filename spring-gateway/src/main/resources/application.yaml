@@ -1,0 +1,43 @@
+spring.application.name: spring-gateway
+
+# virtual threads
+spring.threads.virtual.enabled: true
+# banner-mode: off
+server:
+  main.banner-mode: off
+  tomcat.threads.max: 10
+  servlet.session.cookie:
+    http-only: true
+  servlet:
+    context-path: /
+
+spring:
+  cloud:
+    gateway:
+      mvc:
+        enabled: true
+        routes:
+          - id: resource-server
+            uri: ${RESOURCE_SERVER_URI:http://resource.nsa2.com:8082} # <1>
+            predicates:
+              - Path=/resource/**   # <2>
+            filters:
+              - StripPrefix=1   # <3>
+              #- AddRequestHeader=Origin, http://gateway.nsa2.com:8080
+              - TokenRelay= # <4>
+
+spring.security.oauth2.client:
+  registration:
+    nsa2-gateway:
+      provider: keycloak
+      client-id: nsa2-gateway
+      client-secret: 1YWFzABOmhL6Hb5VYWSo36bk0URILDdf
+      authorization-grant-type: authorization_code
+      scope: openid,profile,email
+      redirect-uri: ${NSA2_OAUTH_REDIRECT_URI:{baseUrl}/login/oauth2/code/nsa2-gateway}
+      client-name: "NSA2 Keycloak"
+      client-authentication-method: client_secret_basic
+  provider:
+    keycloak:
+      issuer-uri: ${NSA2_OAUTH_ISSUER_URI:http://auth.nsa2.com:9000/realms/nsa2-realm}
+      user-name-attribute: preferred_username

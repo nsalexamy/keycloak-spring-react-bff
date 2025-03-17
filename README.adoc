@@ -1,0 +1,898 @@
+= Keycloak for OAuth 2.0 and OpenID Connect (OIDC) Authentication
+
+:imagesdir: docs/images
+
+== Introduction
+
+Keycloak is an open-source identity and access management server, which provides Single Sign-On (SSO) for web applications and RESTful web services. It supports OAuth 2.0 and OpenID Connect (OIDC) for authentication and authorization.
+
+In this tutorial, we will learn how to use Keycloak for OAuth 2.0 and OpenID Connect (OIDC) authentication in a Spring Boot application.
+
+This project is composed of the following modules:
+
+* keycloak-server: A Keycloak server running in a Docker container.
+* spring-gateway: A Spring Boot application acting as an OAuth 2.0 Client.
+* spring-resource-server: A Spring Boot application acting as an OAuth 2.0 Resource Server.
+* react-app: A React application acting as an OAuth 2.0 Client(TBD)
+
+
+Hostnames in /etc/hosts:
+----
+127.0.0.1	auth.nsa2.com
+127.0.0.1	gateway.nsa2.com
+127.0.0.1	resource.nsa2.com
+----
+
+auth.nsa2.com:9000 - Keycloak Server
+gateway.nsa2.com:8080 - Spring Gateway
+resource.nsa2.com:8082 - Spring Resource Server
+
+
+== Replacing Spring Authorization Server with Keycloako
+
+I have implemented the same example using Spring Authorization Server now I am going to replace it with Keycloak.
+
+Refer to the following tutorial for the Spring Authorization Server example:
+
+* link:https://www.linkedin.com/pulse/spring-cloud-gateway-authorization-server-using-database-kim-brbbc/[Spring Cloud Gateway with Authorization Server using Database]
+
+=== Comparison: Keycloak vs Spring Authorization Server
+
+Keycloak is a standalone identity and access management server, which provides a wide range of features, including Single Sign-On (SSO), Identity Brokering and Social Login, User Federation, Client Adapters, an Admin Console, and an Account Management Console.
+
+Spring Authorization Server is a lightweight OAuth 2.0 and OpenID Connect (OIDC) server, which provides a subset of the features provided by Keycloak. It is designed to be embedded in Spring Boot applications and is suitable for simple use cases. It is not as feature-rich as Keycloak.
+
+Here are some of the key differences between Keycloak and Spring Authorization Server:
+
+* Keycloak is a standalone server, whereas Spring Authorization Server is designed to be embedded in Spring Boot applications.
+* Keycloak provides a wide range of features, including Single Sign-On (SSO), Identity Brokering and Social Login, User Federation, Client Adapters, an Admin Console, and an Account Management Console. Spring Authorization Server provides a subset of these features.
+* Keycloak is suitable for complex use cases, whereas Spring Authorization Server is suitable for simple use cases.
+
+== Keycloak Server
+
+In this section, we will set up a Keycloak server running in a Docker container.
+
+=== Run Keycloak Server in Docker
+
+.keycloak-server/docker-compose.yaml
+[source,yaml]
+----
+networks:
+  keycloak:
+    driver: bridge
+
+volumes:
+  pg_data:
+    driver: local
+
+services:
+  keycloak-postgresql:
+    image: postgres:16.8
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - 5432:5432
+    networks:
+      - keycloak
+
+  keycloak:
+    # <1>
+    image: bitnami/keycloak:26.1.4-debian-12-r0
+    # image: keycloak/keycloak:26.1 # docker hub
+    # https://www.keycloak.org/getting-started/getting-started-docker
+    # image: quay.io/keycloak/keycloak:26.1.4
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: changeit
+      KC_SPI_ADMIN_REALM: master
+      KEYCLOAK_HTTP_RELATIVE_PATH: /
+    
+      DB_VENDOR: POSTGRES
+      DB_ADDR: keycloak-postgresql
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_PASSWORD: password
+    ports:
+      - 9000:8080
+    networks:
+      - keycloak    
+----
+
+<1> For Keycloak Docker Image, there are multiple options available:
+* `bitnami/keycloak:26.1.4-debian-12-r0` - Bitnami Keycloak Docker Image
+* `keycloak/keycloak:26.1` - Official Keycloak Docker Image
+* `quay.io/keycloak/keycloak:26.1.4` - Quay.io Keycloak Docker Image
+
+I am using the Bitnami Keycloak Docker Image as I am planning to use the Bitnami Keycloak Helm Chart to deploy Keycloak on Kubernetes in the future.
+
+
+To start the Keycloak server, run the following command:
+[source,bash]
+----
+$ cd keycloak-server
+$ docker-compose up
+----
+
+=== Access Keycloak Admin Console
+
+To access the Keycloak Admin Console, open a web browser and go to the following URL: 
+
+* http://auth.nsa2.com:9000
+
+Login with the following credentials:
+
+* Username: `admin`
+* Password: `changeit`
+
+.Keycloak Admin Console - Login
+image::kc-login.png[]
+
+=== Create a New Realm
+
+The first step is to create a new realm in Keycloak. A realm is a container for a set of users, credentials, roles, and groups. It is used to manage a set of users and applications. It is like a tenant in a multi-tenant application.
+
+.Click on the `Create` button to create a new realm.
+image::kc-create-realm-button.png[]
+
+Click on the `Create` button to create a new realm.
+
+.Keycloak Admin Console - Create Realm
+image::kc-create-realm.png[]
+
+I set the realm name to `nsa2-realm` and clicked on the `Create` button to create the realm.
+
+Once the realm is created, Keycloak will provide Realm information endpoint URL, which can be used to get the realm information.
+
+http://auth.nsa2.com:9000/realms/nsa2-realm
+
+In this tutorial, we will use the `nsa2-realm` realm for OAuth 2.0 and OpenID Connect (OIDC) authentication.
+
+=== Create a New Client
+
+The next step is to create a new client in Keycloak. A client is an application that wants to use Keycloak for authentication and authorization. It can be a web application, a mobile application, or a service.
+
+I am going to use the BFF (Backend For Frontend) pattern in this tutorial. The BFF is a server-side component that is used to aggregate and transform data from multiple services into a single API for the front-end application. Spring Cloud Gateway acts as the BFF in this tutorial.
+
+Click on the `Clients` tab in the Keycloak Admin Console and then click on the `Create` button to create a new client.
+
+There are 3 steps to create a new client:
+
+. General Settings
+  * **Cleint Type**: Select `OpendID Connect` as the client type.
+  * **Client ID**: Set the client ID to `nsa2-gateway`.
+  * **Name**: Set the name to `NSA2 Gateway`.
+  * **Description**: Set the description to `NSA2 Gateway Client`.
+  * **Always display UI**: Set to `Off` for now.
+. Capability config
+  * **Client authenticator**: Set to `On`.
+  * **Authorization**: Set to `On`.
+  * **Authentication flow**: Check 'Standard flow', 'Direct access grants', 'Service accounts roles'.
+. Login Settings
+  * **Root URL**: (blank)
+  * **Home URL**: (blank)
+  * **Valid Redirect URIs**: `http://gateway.nsa2.com:8080/*`
+  * **Valid post logout redirect URIs**: `http://gateway.nsa2.com:8080/*`
+  * **Web Origins**: `http://gateway.nsa2.com:8080`
+
+=== Client Secret
+
+To get the client secret, click on the `Credentials` tab and then click on the `Regenerate Secret` button to generate a new client secret.
+
+.Keycloak Admin Console - Client Credentials
+image::kc-oauth2-client-secret.png[]
+
+Use the client ID and client secret to configure the OAuth 2.0 client in the Spring Boot application.
+
+=== Create Roles
+
+The next step is to create roles in Keycloak. A role is a set of permissions that can be assigned to users or groups. It is used to manage access control in the application.
+
+Click on the `Roles` tab in the Keycloak Admin Console and then click on the `Create role` button to create a new role.
+
+I created the following roles:
+
+* 'ROLE_NSA2_ADMIN' - Admin role
+* 'ROLE_NSA2_USER' - User role
+
+
+. Keycloak Admin Console - Create Role
+image::kc-oauth2-client-roles.png[]
+
+
+=== Create Groups
+
+The next step is to create groups in Keycloak. A group is a collection of users. It is used to manage a set of users with similar roles or permissions.
+
+Click on the `Groups` tab in the Keycloak Admin Console and then click on the `Create group` button to create a new group.
+
+I created the following groups:
+
+* 'nsa2-admins' - Admins group
+* 'nsa2-users' - Users group
+
+=== Create Users
+
+The next step is to create users in Keycloak. A user is an entity that can be authenticated and authorized to access the application.
+
+Click on the `Users` tab in the Keycloak Admin Console and then click on the `Create new user` button to create a new user.
+
+I created the
+
+* 'nsa2admin' user with the 'ROLE_NSA2_ADMIN' role and 'nsa2-admins' group.
+* 'nsa2user' user with the 'ROLE_NSA2_USER' role and 'nsa2-users' group.
+
+* **Required user actions**: None
+* **Email verified**: set to `On`
+* **Username**: nsa2admin
+* **Email**: user's email
+* **First name**: user's first name 
+* **Last name**:  user's last name
+
+==== Set Password
+
+To set the password for the user, click on the `Credentials` tab and then set the password for the user.
+
+* **Password**: user's password
+* **Password Confirmation**: user's password
+* **Temporary**: false
+
+==== Assign Role
+
+To assign a role to the user, click on the `Role Mappings` tab and then assign the role to the user. Click on the `Assign Role` button to assign the role to the user.
+
+
+==== Assign Group
+
+To assign a group to the user, click on the `Groups` tab and then assign the group to the user. Click on the `Join Group` button to assign the group to the user.
+
+
+Now we have created a new realm, a new client, roles, groups, and users in Keycloak. We can use these entities for OAuth 2.0 and OpenID Connect (OIDC) authentication in the Spring Boot application.
+
+== Spring Gateway
+
+I will create a new Spring Boot application acting as an OAuth 2.0 client using the Spring Gateway with the Spring Boot version 3.4.3.
+
+
+Dependencies:
+
+* Lombok
+* Spring Web
+* OAuth2 Client
+* Cloud Bootstrap
+* Gateway
+
+=== build.gradle.kts
+
+Here is the `build.gradle.kts` file for the Spring Gateway application:
+
+.build.gradle.kts
+[source,kotlin]
+----
+plugins {
+    java
+    id("org.springframework.boot") version "3.4.3"
+    id("io.spring.dependency-management") version "1.1.7"
+}
+
+group = "com.nsalexamy.example"
+version = "0.0.1-SNAPSHOT"
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+configurations {
+    compileOnly {
+        extendsFrom(configurations.annotationProcessor.get())
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+extra["springCloudVersion"] = "2024.0.0"
+
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.cloud:spring-cloud-starter-gateway-mvc")
+
+    implementation("org.aspectj:aspectjweaver")
+
+    compileOnly("org.projectlombok:lombok")
+    annotationProcessor("org.projectlombok:lombok")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.security:spring-security-test")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}")
+    }
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
+}
+----
+
+=== application.yml
+
+.application.yaml
+[source,yaml]
+----
+spring.application.name: spring-gateway
+
+# virtual threads
+spring.threads.virtual.enabled: true # <1>
+# banner-mode: off
+server:
+  main.banner-mode: off
+  tomcat.threads.max: 10
+  servlet.session.cookie:
+    http-only: true
+  servlet:
+    context-path: /
+
+# <2>
+spring.security.oauth2.client:
+  registration:
+    nsa2-gateway:
+      provider: keycloak
+      client-id: nsa2-gateway
+      client-secret: 1YWFzABOmhL6Hb5VYWSo36bk0URILDdf # <3>
+      authorization-grant-type: authorization_code
+      scope: openid,profile,email
+      redirect-uri: ${NSA2_OAUTH_REDIRECT_URI:{baseUrl}/login/oauth2/code/nsa2-gateway}
+      client-name: "NSA2 Keycloak"
+      client-authentication-method: client_secret_basic
+  provider:
+    keycloak:
+      issuer-uri: ${NSA2_OAUTH_ISSUER_URI:http://auth.nsa2.com:9000/realms/nsa2-realm} # <4>
+      user-name-attribute: preferred_username
+----
+
+<1> Enable virtual threads for Spring Boot 3.4.3.
+<2> OAuth 2.0 client configuration for Keycloak.
+<3> Client secret for the OAuth 2.0 client. Replace it with the actual client secret generated in Keycloak.
+<4> Issuer URI for Keycloak. Replace it with the actual issuer URI provided by Keycloak.
+
+=== SecurityConfig.java
+
+Here is the `SecurityConfig.java` file for the Spring Gateway application:
+
+.SecurityConfig.java
+[source,java]
+----
+@Configuration
+@EnableAspectJAutoProxy
+public class SecurityConfig {
+
+    # <1>
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+                .authorizeHttpRequests(auth ->
+                        auth
+                            .requestMatchers("/actuator/**").permitAll()
+                            .anyRequest().authenticated()
+                )
+                .oauth2Login(Customizer.withDefaults())  // Enables OAuth2 login
+                .oauth2Client(Customizer.withDefaults()) // Enables OAuth2 client
+                .csrf(csrf -> csrf.disable())  // Disable CSRF for APIs
+                .cors(cors -> cors.configurationSource(corsConfigurationSource())); // Enable CORS
+
+        return http.build();
+    }
+
+    # <2>
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowCredentials(true);
+        config.setAllowedOrigins(List.of(
+                "http://auth.nsa2.com:9000",  // Keycloak
+                "http://gateway.nsa2.com:8080" // Spring Cloud Gateway
+        ));
+        config.setAllowedHeaders(List.of("*"));
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+        return source;
+    }
+}
+----
+
+<1> Security filter chain configuration for OAuth 2.0 and OpenID Connect (OIDC) authentication.
+<2> CORS configuration for Keycloak and Spring Cloud Gateway.
+
+=== UserController.java
+
+UserController.java provides two endpoints:
+
+* `/user/username` - Get the username of the authenticated user.
+* `/user/profile` - Get the profile information of the authenticated user.
+
+These are secure endpoints that require the user to be authenticated. The request will be redirected to the Keycloak login page if the user is not authenticated.
+
+Here is the `UserController.java` file for the Spring Gateway application:
+
+.UserController.java
+[source,java]
+----
+@RestController
+@RequestMapping("/user")
+@Slf4j
+public class UserController {
+
+    // <1>
+    @GetMapping("/username")
+    public Map<String, String> username(Authentication authentication) {
+        String username = authentication.getName();
+        log.info("username: {}",username);
+        return Map.of("username", username);
+    }
+
+    // <2>
+    @GetMapping("/profile")
+    public Map<String, Object> idToken(@AuthenticationPrincipal OidcUser oidcUser) {
+        log.info("oidcUser: {}", oidcUser);
+        log.info("id token: {}", oidcUser.getIdToken().getTokenValue());
+
+        if(oidcUser == null) {
+            return Map.of("error", "No id_token found", "id_token", null);
+
+        } else {
+            return oidcUser.getClaims();
+        }
+    }
+}
+----
+
+<1> Get the username of the authenticated user.
+<2> Get the profile information of the authenticated user.
+
+=== Run Spring Gateway
+
+To run the Spring Gateway application, run the following command:
+
+[source,bash]
+----
+$ cd spring-gateway
+$ ./gradlew bootRun
+----
+
+=== Access Spring Gateway Secure Endpoints
+
+Open a web browser and go to the following URL:
+
+http://gateway.nsa2.com:8080/user/username
+
+.Keycloak Login Page
+image::gateway-login.png[]
+
+You will be redirected to the Keycloak login page. Login with the following credentials:
+
+* Username: `nsa2admin`
+* Password: `password`
+
+After successful authentication, you will be redirected to the `/user/username` endpoint, which will display the username of the authenticated user.
+
+.Output of /user/username
+[source,json]
+----
+{
+  "username": "nsa2admin"
+}
+----
+
+Once you are authenticated, you can access the `/user/profile` endpoint to get the profile information of the authenticated user.
+
+.Output of /user/profile
+[source,json]
+----
+{
+  "at_hash": "L8xCaoLgmQLo7vU1ox3VhQ",
+  "sub": "e6ce3b9e-902a-42db-af8b-f94282f7cf3b",
+  "email_verified": true,
+  "iss": "http://auth.nsa2.com:9000/realms/nsa2-realm",
+  "typ": "ID",
+  "preferred_username": "nsa2admin",
+  "given_name": "Nsa2Admin",
+  "nonce": "wOvSXLTx8xE0cP-tPB7F4TlekUDg4Gtz5g3y44G_EGM",
+  "sid": "ebc263bb-0be6-4ed6-a87e-bb316823dddc",
+  "aud": [
+    "nsa2-gateway"
+  ],
+  "acr": "1",
+  "azp": "nsa2-gateway",
+  "auth_time": "2025-03-16T23:50:08Z",
+  "name": "Nsa2Admin Doe",
+  "exp": "2025-03-16T23:55:08Z",
+  "family_name": "Doe",
+  "iat": "2025-03-16T23:50:08Z",
+  "email": "nsa2admin@nsa2.com",
+  "jti": "8bb63bf6-5ffb-496e-ac30-4c2b09b9aad0"
+}
+----
+
+Now we have successfully implemented OAuth 2.0 and OpenID Connect (OIDC) authentication in the Spring Gateway application using Keycloak.
+
+== Spring Resource Server
+
+In this section, we will create a new Spring Boot application acting as an OAuth 2.0 resource server using the Spring Resource Server with the Spring Boot version 3.4.3. All secure endpoints in the Spring Resource Server require JWT token authentication provided by the Spring Gateway. As the OAuth 2.0 client, the Spring Gateway will provide the JWT token to the Spring Resource Server.
+
+
+=== Spring Gateway Configuration for Routing
+
+Let's add configuration below to the `application.yml` file of Spring Gateway to pass the JWT token to the Spring Resource Server.
+
+.application.yml - Spring Gateway
+[source,yaml]
+----
+spring:
+  cloud:
+    gateway:
+      mvc:
+        enabled: true
+
+        routes:
+          - id: resource-server
+            uri: ${RESOURCE_SERVER_URI:http://resource.nsa2.com:8082}   # <1>
+            predicates:
+              - Path=/resource/**   # <2>
+            filters:
+              - StripPrefix=1    # <3>
+              - TokenRelay=  # <4>
+----
+
+<1> URI of the Spring Resource Server.
+<2> Path predicate for the Spring Resource Server.
+<3> StripPrefix filter to remove the `/resource` prefix from the request path.
+<4> TokenRelay filter to pass the JWT token to the Spring Resource Server.
+
+=== build.gradle.kts
+
+Here is the `build.gradle.kts` file for the Spring Resource Server application:
+
+.build.gradle.kts - dependencies
+[source,kotlin]
+----
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    compileOnly("org.projectlombok:lombok")
+    annotationProcessor("org.projectlombok:lombok")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+----
+
+=== application.yml
+
+.application.yml
+[source,yaml]
+----
+server:
+  port: 8082    # <1>
+
+spring.application.name: spring-resource-server
+
+spring.threads.virtual.enabled: true
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${NSA2_JWT_ISSUER_URI:http://http://auth.nsa2.com:9000/realms/nsa2-realm} # <2>
+
+
+----
+
+<1> Port of the Spring Resource Server.
+<2> Issuer URI for the JWT token. Replace it with the actual issuer URI provided by Keycloak.
+
+Make sure that the Spring Resource Server is running on the `resource.nsa2.com:8082` hostname.
+
+=== JWT Token - Payload
+
+The roles configured in Keycloak are included in the JWT token payload. The JWT token payload contains the following information:
+
+[source,,json]
+----
+{
+  "exp": 1742183867,
+  "iat": 1742183567,
+  "auth_time": 1742183567,
+  "jti": "4d637fbc-08aa-4fa5-8354-25547f61a27e",
+  "iss": "http://auth.nsa2.com:9000/realms/nsa2-realm",
+  "aud": "account",
+  "sub": "ea1c0590-2144-41b4-9cdc-557198fc540d",
+  "typ": "Bearer",
+  "azp": "nsa2-gateway",
+  "sid": "43b5a310-5d24-472e-85e0-cba279ba4a2f",
+  "acr": "1",
+  "allowed-origins": [
+    "http://gateway.nsa2.com:8080"
+  ],
+  "realm_access": {
+    "roles": [
+      "offline_access",
+      "uma_authorization",
+      "default-roles-nsa2-realm"
+    ]
+  },
+  "resource_access": {
+    "account": {
+      "roles": [
+        "manage-account",
+        "manage-account-links",
+        "view-profile"
+      ]
+    },
+    "nsa2-gateway": {
+      "roles": [
+        "ROLE_NSA2_USER"    # <1>
+      ]
+    }
+  },
+  "scope": "openid profile email",
+  "email_verified": true,
+  "name": "Nsa2 User Doe",
+  "preferred_username": "nsa2user",
+  "given_name": "Nsa2 User",
+  "family_name": "Doe",
+  "email": "nsa2user@nsa2.com"
+}
+----
+
+<1> Roles assigned to the user in the resource_access.nsa2-gateway.roles section.
+
+We are going to use the 'ROLE_NAS2_USER' and 'ROLE_NSA2_ADMIN' roles in the Spring Resource Server in the form of `@PreAuthorize` annotations.
+
+[source,java]
+----
+@PreAuthorize("hasRole('ROLE_NSA2_USER')")
+@PreAuthorize("hasRole('ROLE_NSA2_ADMIN')")
+-----
+
+For more information on JwtAuthenticationConverter, refer to the following link:
+
+* link:https://www.linkedin.com/pulse/spring-cloud-gateway-authorization-server-roles-young-gyu-kim-1m0ac/[Spring Security Reference - JwtAuthenticationConverter]
+
+
+=== CustomJwtGrantedAuthoritiesConverter.java
+
+CustomJwtGrantedAuthoritiesConverter.java is a custom implementation of JwtGrantedAuthoritiesConverter that converts the roles in the JWT token payload to authorities.
+
+* For nsa2admin user, the role 'ROLE_NSA2_ADMIN' is assigned in Keycloak Admin Console.
+* For nsa2user user, the role 'ROLE_NSA2_USER' is assigned in Keycloak Admin Console.
+
+These roles are assigned to the user in the JWT token payload when the user is authenticated.
+
+.CustomJwtGrantedAuthoritiesConverter.java
+[source,java]
+----
+@Slf4j
+public class CustomJwtGrantedAuthoritiesConverter implements Converter<Jwt, Collection<GrantedAuthority>> {
+    private static final String RESOURCE_ACCESS = "resource_access";
+    private static final String CLIENT_ID = "nsa2-gateway"; // Your Keycloak client ID
+    private static final String ROLES = "roles";
+
+    private final JwtGrantedAuthoritiesConverter defaultGrantedAuthoritiesConverter = new JwtGrantedAuthoritiesConverter();
+
+
+    @Override
+    public <U> Converter<Jwt, U> andThen(Converter<? super Collection<GrantedAuthority>, ? extends U> after) {
+        return Converter.super.andThen(after);
+    }
+    @Override
+    public Collection<GrantedAuthority> convert(Jwt source) {
+        Collection<GrantedAuthority> authorities = defaultGrantedAuthoritiesConverter.convert(source);
+        log.info("authorities : {}", authorities);
+
+        var roles = source.getClaimAsStringList("roles");
+        log.info("roles: {}", roles);
+
+
+        Map<String, Object> resourceAccess = source.getClaimAsMap(RESOURCE_ACCESS);
+
+        // <1>
+        if (resourceAccess != null && resourceAccess.containsKey(CLIENT_ID)) {
+            Map<String, Object> clientAccess = (Map<String, Object>) resourceAccess.get(CLIENT_ID);
+            if (clientAccess.containsKey(ROLES)) {
+                List<String> clientRoles = (List<String>) clientAccess.get(ROLES);
+                authorities = Stream.concat(
+                        authorities.stream(),
+                        clientRoles.stream().map(role -> role.startsWith("ROLE_") ? role : "ROLE_" + role).map(SimpleGrantedAuthority::new)
+                ).collect(Collectors.toList());
+            }
+        }
+
+        log.info("authorities : {}", authorities);
+
+        return authorities;
+    }
+
+}
+----
+
+<1> Convert the roles in the JWT token payload to authorities. The roles are prefixed with 'ROLE_'.
+
+=== SecurityConfig.java
+
+The CustomJwtGrantedAuthoritiesConverter is configured in the SecurityConfig.java file.
+
+Here is the `SecurityConfig.java` file for the Spring Resource Server application:
+
+.SecurityConfig.java
+[source,java]
+----
+@Configuration(proxyBeanMethods = false)
+@EnableWebSecurity
+@EnableMethodSecurity(prePostEnabled = true) // <1>
+public class SecurityConfig {
+
+    // <2>    
+    private final String jwkSetUri = "http://auth.nsa2.com:9000/realms/nsa2-realm/protocol/openid-connect/certs";
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            JwtAuthenticationConverter nsa2AuthenticationConverter) throws Exception {
+
+        http
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/actuator/**").permitAll()
+                        .anyRequest().authenticated()
+                )
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt
+                                .jwtAuthenticationConverter(nsa2AuthenticationConverter) // <3>
+                                .jwkSetUri(jwkSetUri)   // <4>
+                        )
+                );
+
+        return http.build();
+    }
+
+    @Bean
+    public JwtAuthenticationConverter nsa2AuthenticationConverter() {
+        var converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(new CustomJwtGrantedAuthoritiesConverter());
+        return converter;
+    }
+}
+----
+
+<1> Enable method-level security with `@PreAuthorize` annotations.
+<2> JWK set URI for the JWT token.
+<3> Custom JwtAuthenticationConverter for converting the roles in the JWT token payload to authorities.
+<4> JWK set URI for the JWT token.
+
+=== SecureController.java
+
+
+SecureController.java provides the following secure endpoints:
+
+* `/secure/hello` - Hello endpoint that requires the 'ROLE_NSA2_USER' or 'ROLE_NSA2_ADMIN' role.
+* `/secure/admin/hello` - Admin Hello endpoint that requires the 'ROLE_NSA2_ADMIN' role.
+* `/secure/access_token` - Access Token endpoint that displays the access token information. This is for debugging purposes only. Do not expose this endpoint in production because it exposes sensitive information.
+
+.secureController.java
+[source,java]
+----
+@RestController
+@Slf4j
+@RequestMapping("/secure")
+public class SecureController {
+    @PreAuthorize("hasAnyRole('NSA2_USER', 'NSA2_ADMIN')")  // <1>
+    @GetMapping("/hello")
+    public Message hello(Principal principal, JwtAuthenticationToken jwtToken) {
+        log.info("principal: {}", principal);
+        log.info("name: {}", jwtToken.getName());
+        log.info("principal class: {}", principal.getClass());
+        log.info("jwtToken class: {}", jwtToken.getClass());
+        log.info("authorities: {}", jwtToken.getAuthorities());
+        return new Message("ResourceServer - Hello, " + principal.getName());
+    }
+
+    @PreAuthorize("hasRole('NSA2_ADMIN')")  // <2>
+    @GetMapping("/admin/hello")
+    public Message adminHello(Principal principal) {
+        return new Message("ResourceServer - Admin Hello, " + principal.getName());
+    }
+
+    @GetMapping("/access_token")
+    public AccessToken accessToken(JwtAuthenticationToken jwtToken) {
+
+        Map<String, Object> tokenAttributes = jwtToken.getTokenAttributes();
+        log.info("principal class: {}", jwtToken.getPrincipal().getClass());
+
+        if(jwtToken.getPrincipal() instanceof DefaultOidcUser oidcUser) {
+            log.info("oidcUser: {}", oidcUser);
+        } else {
+            log.info("is not instance of DefaultOidcUser");
+        }
+
+        var authorities = jwtToken.getAuthorities();
+        log.info("authorities: {}", authorities);
+        return new AccessToken(jwtToken.getName(), jwtToken.getToken().getTokenValue(), authorities.toString(),
+                tokenAttributes.containsKey("scope") ? tokenAttributes.get("scope").toString() : "");
+    }
+}
+----
+
+<1> Secure endpoint that requires the 'ROLE_NSA2_USER' or 'ROLE_NSA2_ADMIN' role.
+<2> Secure endpoint that requires the 'ROLE_NSA2_ADMIN' role. When the 'nsa2user' user accesses this endpoint, an 'Access Denied' error will be returned.
+
+=== Run Spring Resource Server
+
+To run the Spring Resource Server application, run the following command:
+
+[source,shell]
+----
+$ cd spring-resource-server
+$ ./gradlew bootRun
+----
+
+=== Access Secure Endpoints
+
+To access endpoints in the Spring Resource Server, you need to get the JWT token from the Spring Gateway and pass it to the Spring Resource Server. As Spring Gateway is acting as the OAuth 2.0 client and Backend for frontend(BFF), it will manage the JWT token and pass it to the Spring Resource Server.
+
+Open a web browser and go to the following URL:
+
+* http://gateway.nsa2.com:8080/resource/secure/hello
+* http://gateway.nsa2.com:8080/resource/secure/admin/hello
+
+
+
+==== /secure/hello
+
+Either the 'nsa2admin' or 'nsa2user' user can access the `/secure/hello` endpoint. The 'nsa2admin' user has the 'ROLE_NSA2_ADMIN' role, and the 'nsa2user' user has the 'ROLE_NSA2_USER' role. And the output will be as follows:
+
+[source,json]
+----
+{
+  "message": "ResourceServer - Hello, nsa2admin"
+}
+----
+
+==== /secure/admin/hello
+
+Only the 'nsa2admin' user can access the `/secure/admin/hello` endpoint. The 'nsa2user' user will get an 'Access Denied' error when trying to access this endpoint.
+
+The output will be as follows:
+
+[source,json]
+----
+{
+  "message": "ResourceServer - Admin Hello, nsa2admin"
+}
+----
+
+When the 'nsa2user' user tries to access the `/secure/admin/hello` endpoint, an 'Access Denied' error will be returned.
+
+.Access Denied Error
+image::resource-access-denied.png[]
+
+== Conclusion
+
+In this tutorial, we learned how to use Keycloak for OAuth 2.0 and OpenID Connect (OIDC) authentication in a Spring Boot application. We created a Keycloak server running in a Docker container and configured it with a new realm, client, roles, groups, and users. We created a Spring Gateway application acting as an OAuth 2.0 client and a Spring Resource Server application acting as an OAuth 2.0 resource server. We secured the endpoints in the Spring Resource Server with the 'ROLE_NSA2_USER' and 'ROLE_NSA2_ADMIN' roles. We used the Spring Gateway to manage the JWT token and pass it to the Spring Resource Server. We successfully implemented OAuth 2.0 and OpenID Connect (OIDC) authentication in the Spring Gateway and Spring Resource Server applications using Keycloak.
+
+This project is available on GitHub at link: https://github.com/nsalexamy/keycloak-spring-react-bff[nsalexamy/keycloak-spring-react-bff].
+
+All my LinkedIn articles are available at link:https://www.linkedin.com/pulse/my-linkedin-article-library-young-gyu-kim-2jihc/[My LinkedIn Article Library].

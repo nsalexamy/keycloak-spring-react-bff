@@ -26,13 +26,13 @@ services:
     image: bitnami/keycloak:26.1.4-debian-12-r0
     # image: keycloak/keycloak:26.1
     # https://www.keycloak.org/getting-started/getting-started-docker
-    # image: quay.io/keycloak/keycloak:26.1.4 start-dev
+    # image: quay.io/keycloak/keycloak:26.1.4
     environment:
-      KEYCLOAK_HOSTNAME: auth.nsa2.com
+      #KEYCLOAK_HOSTNAME: auth.nsa2.com
       # KEYCLOAK_USER: admin
       # KEYCLOAK_PASSWORD: password
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: password
+      KC_BOOTSTRAP_ADMIN_PASSWORD: changeit
       KC_SPI_ADMIN_REALM: master
       KEYCLOAK_HTTP_RELATIVE_PATH: /
     
